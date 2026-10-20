@@ -1,0 +1,9 @@
+parameters:
+    level: 0
+    paths:
+        - core
+    bootstrapFiles:
+        - tools/phpstan-bootstrap.php
+    tmpDir: var/phpstan
+    reportUnmatchedIgnoredErrors: false
+    treatPhpDocTypesAsCertain: false

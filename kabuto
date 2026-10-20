@@ -1,0 +1,134 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Kabuto console entry point.
+ *
+ * Usage: php kabuto <command> [arguments] [--flags]
+ */
+
+$basePath = __DIR__;
+$autoload = $basePath . '/vendor/autoload.php';
+
+if (is_file($autoload)) {
+    require $autoload;
+} else {
+    $psr4 = [
+        'Kabuto\\' => $basePath . '/core/',
+        'App\\' => $basePath . '/app/',
+    ];
+
+    spl_autoload_register(static function (string $class) use ($psr4): void {
+        foreach ($psr4 as $prefix => $dir) {
+            if (!str_starts_with($class, $prefix)) {
+                continue;
+            }
+            $relative = substr($class, strlen($prefix));
+            $file = $dir . str_replace('\\', '/', $relative) . '.php';
+            if (is_file($file)) {
+                require $file;
+                return;
+            }
+        }
+    });
+
+    $helpers = $basePath . '/core/Support/helpers.php';
+    if (is_file($helpers)) {
+        require $helpers;
+    }
+}
+
+Kabuto\Support\Dotenv::load($basePath);
+
+use Kabuto\Application;
+use Kabuto\Console\Console;
+use Kabuto\Console\Commands\DbPullCommand;
+use Kabuto\Console\Commands\DbPushCommand;
+use Kabuto\Console\Commands\DbSeedCommand;
+use Kabuto\Console\Commands\DoctorCommand;
+use Kabuto\Console\Commands\DbTablesCommand;
+use Kabuto\Console\Commands\KeyGenerateCommand;
+use Kabuto\Console\Commands\InstallCommand;
+use Kabuto\Console\Commands\ContainerCheckCommand;
+use Kabuto\Console\Commands\OpenApiGenerateCommand;
+use Kabuto\Console\Commands\QueueFailedCommand;
+use Kabuto\Console\Commands\QueueRetryCommand;
+use Kabuto\Console\Commands\QueueWorkCommand;
+use Kabuto\Console\Commands\MakeEventCommand;
+use Kabuto\Console\Commands\MakeListenerCommand;
+use Kabuto\Console\Commands\CacheClearCommand;
+use Kabuto\Console\Commands\ScheduleRunCommand;
+use Kabuto\Console\Commands\ScheduleListCommand;
+use Kabuto\Console\Commands\ScheduleWorkCommand;
+use Kabuto\Console\Commands\MakeControllerCommand;
+use Kabuto\Console\Commands\MakeDtoCommand;
+use Kabuto\Console\Commands\MakeMiddlewareCommand;
+use Kabuto\Console\Commands\MakeModuleCommand;
+use Kabuto\Console\Commands\MakeModuleFromDbCommand;
+use Kabuto\Console\Commands\MakeModulesFromDbCommand;
+use Kabuto\Console\Commands\MakeRepositoryCommand;
+use Kabuto\Console\Commands\MakeResourceCommand;
+use Kabuto\Console\Commands\MakeServiceCommand;
+use Kabuto\Console\Commands\MakeMigrationCommand;
+use Kabuto\Console\Commands\MigrateCommand;
+use Kabuto\Console\Commands\MigrationRollbackCommand;
+use Kabuto\Console\Commands\MigrationStatusCommand;
+use Kabuto\Console\Commands\NewProjectCommand;
+use Kabuto\Console\Commands\RouteListCommand;
+use Kabuto\Console\Commands\ServeCommand;
+use Kabuto\Console\Commands\StorageLinkCommand;
+use Kabuto\Console\Commands\TestCommand;
+
+$app = new Application(basePath: $basePath);
+
+try {
+    $app->boot();
+    $bootError = null;
+} catch (Throwable $bootError) {
+    // Defer the failure: key:generate (and list/help) still work so a
+    // fresh clone can recover without a valid .env.
+}
+
+$console = new Console($basePath, $app, $bootError ?? null);
+
+$console
+    ->add(ServeCommand::class, ['serve'])
+    ->add(TestCommand::class, ['t'])
+    ->add(MakeModuleCommand::class, ['module'])
+    ->add(MakeResourceCommand::class, ['resource'])
+    ->add(MakeControllerCommand::class, ['controller'])
+    ->add(MakeServiceCommand::class, ['service'])
+    ->add(MakeRepositoryCommand::class, ['repository'])
+    ->add(MakeDtoCommand::class, ['dto'])
+    ->add(MakeMiddlewareCommand::class, ['middleware'])
+    ->add(RouteListCommand::class, ['routes'])
+    ->add(NewProjectCommand::class, ['init'])
+    ->add(DbPushCommand::class, ['push'])
+    ->add(DbPullCommand::class, ['pull'])
+    ->add(DbTablesCommand::class, ['tables'])
+    ->add(DbSeedCommand::class, ['seed'])
+    ->add(MakeModuleFromDbCommand::class, ['module-from-db'])
+    ->add(MakeModulesFromDbCommand::class, ['modules-from-db'])
+    ->add(StorageLinkCommand::class, ['storage:link'])
+    ->add(KeyGenerateCommand::class, ['key'])
+    ->add(InstallCommand::class)
+    ->add(ContainerCheckCommand::class)
+    ->add(OpenApiGenerateCommand::class)
+    ->add(QueueWorkCommand::class)
+    ->add(QueueFailedCommand::class)
+    ->add(QueueRetryCommand::class)
+    ->add(MakeEventCommand::class)
+    ->add(MakeListenerCommand::class)
+    ->add(CacheClearCommand::class)
+    ->add(ScheduleRunCommand::class)
+    ->add(ScheduleListCommand::class)
+    ->add(ScheduleWorkCommand::class)
+    ->add(DoctorCommand::class)
+    ->add(MakeMigrationCommand::class)
+    ->add(MigrateCommand::class)
+    ->add(MigrationRollbackCommand::class)
+    ->add(MigrationStatusCommand::class);
+
+exit($console->run($argv));

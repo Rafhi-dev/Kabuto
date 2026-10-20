@@ -1,0 +1,60 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use Kabuto\Common\Injectable;
+
+#[Injectable()]
+final class {{ class }}
+{
+    private array $items = [];
+
+    private int $sequence = 1;
+
+    public function all(): array
+    {
+        return array_values($this->items);
+    }
+
+    public function find(string|int $id): ?array
+    {
+        return $this->items[(string) $id] ?? null;
+    }
+
+    public function create(array $data): array
+    {
+        $id = (string) $this->sequence++;
+        $this->items[$id] = ['id' => $id] + $data;
+
+        return $this->items[$id];
+    }
+
+    public function update(string|int $id, array $data): ?array
+    {
+        $key = (string) $id;
+
+        if (!isset($this->items[$key])) {
+            return null;
+        }
+
+        unset($data['id']);
+        $this->items[$key] = array_merge($this->items[$key], $data);
+
+        return $this->items[$key];
+    }
+
+    public function delete(string|int $id): bool
+    {
+        $key = (string) $id;
+
+        if (!isset($this->items[$key])) {
+            return false;
+        }
+
+        unset($this->items[$key]);
+
+        return true;
+    }
+}

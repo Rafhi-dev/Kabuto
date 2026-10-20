@@ -1,0 +1,57 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use App\Modules\{{ module }}\Dto\Create{{ module }}Dto;
+use App\Modules\{{ module }}\Dto\Update{{ module }}Dto;
+use Kabuto\Common\Body;
+use Kabuto\Common\Controller;
+use Kabuto\Common\Delete;
+use Kabuto\Common\Get;
+use Kabuto\Common\HttpCode;
+use Kabuto\Common\HttpStatus;
+use Kabuto\Common\Param;
+use Kabuto\Common\Post;
+use Kabuto\Common\Put;
+
+#[Controller('{{ route }}')]
+final class {{ class }}
+{
+    public function __construct(private readonly {{ module }}Service ${{ moduleVar }}Service)
+    {
+    }
+
+    #[Get()]
+    public function findAll(): array
+    {
+        return ['data' => $this->{{ moduleVar }}Service->findAll()];
+    }
+
+    #[Get(':id')]
+    public function findOne(#[Param('id')] string $id): array
+    {
+        return ['data' => $this->{{ moduleVar }}Service->findOne($id)];
+    }
+
+    #[Post()]
+    #[HttpCode(HttpStatus::CREATED)]
+    public function create(#[Body()] Create{{ module }}Dto $dto): array
+    {
+        return ['data' => $this->{{ moduleVar }}Service->create($dto)];
+    }
+
+    #[Put(':id')]
+    public function update(#[Param('id')] string $id, #[Body()] Update{{ module }}Dto $dto): array
+    {
+        return ['data' => $this->{{ moduleVar }}Service->update($id, $dto)];
+    }
+
+    #[Delete(':id')]
+    #[HttpCode(HttpStatus::NO_CONTENT)]
+    public function remove(#[Param('id')] string $id): void
+    {
+        $this->{{ moduleVar }}Service->remove($id);
+    }
+}

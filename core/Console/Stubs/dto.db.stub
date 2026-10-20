@@ -1,0 +1,22 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use Kabuto\Support\DTO;
+
+final readonly class {{ class }} extends DTO
+{
+    public function __construct(
+{{ params }}
+    ) {
+    }
+
+    protected static function rules(): array
+    {
+        return [
+{{ rules }}
+        ];
+    }
+}

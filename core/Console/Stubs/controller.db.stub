@@ -1,0 +1,77 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use App\Modules\{{ module }}\Dto\Create{{ module }}Dto;
+use App\Modules\{{ module }}\Dto\{{ module }}Dto;
+use Kabuto\Common\Body;
+use Kabuto\Common\Controller;
+use Kabuto\Common\Delete;
+use Kabuto\Common\Get;
+use Kabuto\Common\HttpCode;
+use Kabuto\Common\HttpStatus;
+use Kabuto\Common\Param;
+use Kabuto\Common\Post;
+use Kabuto\Common\Put;
+use Kabuto\Exceptions\NotFoundException;
+
+#[Controller('{{ route }}')]
+final class {{ class }}
+{
+    public function __construct(private readonly {{ module }}Service ${{ moduleVar }}Service)
+    {
+    }
+
+    #[Get()]
+    public function findAll(): array
+    {
+        $items = array_map(
+            static fn ({{ module }}Dto $item): array => $item->toArray(),
+            $this->{{ moduleVar }}Service->findAll(),
+        );
+
+        return ['data' => $items];
+    }
+
+    #[Get(':id')]
+    public function findOne(#[Param('id')] string $id): array
+    {
+        $item = $this->{{ moduleVar }}Service->findOne($id);
+
+        if ($item === null) {
+            throw new NotFoundException('{{ module }} not found');
+        }
+
+        return ['data' => $item->toArray()];
+    }
+
+    #[Post()]
+    #[HttpCode(HttpStatus::CREATED)]
+    public function create(#[Body()] Create{{ module }}Dto $dto): array
+    {
+        return ['data' => $this->{{ moduleVar }}Service->create($dto)->toArray()];
+    }
+
+    #[Put(':id')]
+    public function update(#[Param('id')] string $id, #[Body()] array $body): array
+    {
+        $item = $this->{{ moduleVar }}Service->update($id, $body);
+
+        if ($item === null) {
+            throw new NotFoundException('{{ module }} not found');
+        }
+
+        return ['data' => $item->toArray()];
+    }
+
+    #[Delete(':id')]
+    #[HttpCode(HttpStatus::NO_CONTENT)]
+    public function remove(#[Param('id')] string $id): void
+    {
+        if (!$this->{{ moduleVar }}Service->remove($id)) {
+            throw new NotFoundException('{{ module }} not found');
+        }
+    }
+}

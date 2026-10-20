@@ -1,0 +1,23 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use Kabuto\Support\DTO;
+
+// Every property is optional: only the given fields are updated.
+final readonly class {{ class }} extends DTO
+{
+    public function __construct(
+        public ?string $name = null,
+    ) {
+    }
+
+    protected static function rules(): array
+    {
+        return [
+            'name' => 'nullable|string|min:2|max:100',
+        ];
+    }
+}

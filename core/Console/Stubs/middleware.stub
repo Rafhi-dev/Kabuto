@@ -1,0 +1,16 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use Kabuto\Http\Request;
+use Kabuto\Http\Response;
+
+final class {{ class }}
+{
+    public function __invoke(Request $req, Response $res, callable $next): Response
+    {
+        return $next($req, $res);
+    }
+}

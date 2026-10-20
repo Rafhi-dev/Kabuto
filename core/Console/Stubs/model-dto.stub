@@ -1,0 +1,30 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+final readonly class {{ class }}
+{
+    public function __construct(
+        public string $id,
+        public string $name = '',
+    ) {
+    }
+
+    public static function fromRow(array $row): self
+    {
+        return new self(
+            id: (string) ($row['id'] ?? ''),
+            name: (string) ($row['name'] ?? ''),
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+        ];
+    }
+}

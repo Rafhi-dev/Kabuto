@@ -1,0 +1,27 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+final readonly class {{ class }}
+{
+    public function __construct(
+{{ paramsAll }}
+    ) {
+    }
+
+    public static function fromRow(array $row): self
+    {
+        return new self(
+{{ fromRow }}
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+{{ array }}
+        ];
+    }
+}

@@ -1,0 +1,49 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use App\Modules\{{ module }}\Dto\Create{{ module }}Dto;
+use App\Modules\{{ module }}\Dto\{{ module }}Dto;
+use Kabuto\Common\Injectable;
+
+#[Injectable()]
+final class {{ class }}
+{
+    public function __construct(private readonly {{ module }}Repository $repository)
+    {
+    }
+
+    public function findAll(): array
+    {
+        return array_map(
+            static fn (array $row): {{ module }}Dto => {{ module }}Dto::fromRow($row),
+            $this->repository->all(),
+        );
+    }
+
+    public function findOne(string|int $id): ?{{ module }}Dto
+    {
+        $row = $this->repository->find($id);
+
+        return $row === null ? null : {{ module }}Dto::fromRow($row);
+    }
+
+    public function create(Create{{ module }}Dto $dto): {{ module }}Dto
+    {
+        return {{ module }}Dto::fromRow($this->repository->create($dto->toArray()));
+    }
+
+    public function update(string|int $id, array $data): ?{{ module }}Dto
+    {
+        $row = $this->repository->update($id, $data);
+
+        return $row === null ? null : {{ module }}Dto::fromRow($row);
+    }
+
+    public function remove(string|int $id): bool
+    {
+        return $this->repository->delete($id) > 0;
+    }
+}

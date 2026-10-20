@@ -1,0 +1,60 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use App\Modules\{{ module }}\Dto\Create{{ module }}Dto;
+use Kabuto\Common\Injectable;
+use Kabuto\Exceptions\NotFoundException;
+
+#[Injectable()]
+final class {{ class }}
+{
+    public function __construct(private readonly {{ module }}Repository $repository)
+    {
+    }
+
+    public function findAll(): array
+    {
+        return $this->repository->all();
+    }
+
+    public function findOne(string|int $id): array
+    {
+        $item = $this->repository->find($id);
+
+        if ($item === null) {
+            throw new NotFoundException('{{ module }} not found');
+        }
+
+        return $item;
+    }
+
+    public function create(Create{{ module }}Dto $dto): array
+    {
+        return $this->repository->create($dto->toArray());
+    }
+
+    public function update(string|int $id, array|object $data): array
+    {
+        $item = $this->findOne($id);
+
+        $payload = is_object($data) && method_exists($data, 'toArray')
+            ? $data->toArray(filterNull: true)
+            : (array) $data;
+
+        if ($payload === []) {
+            return $item;
+        }
+
+        return $this->repository->update($id, $payload) ?? $item;
+    }
+
+    public function remove(string|int $id): bool
+    {
+        $this->findOne($id);
+
+        return $this->repository->delete($id);
+    }
+}

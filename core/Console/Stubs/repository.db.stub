@@ -1,0 +1,41 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use Kabuto\Common\Injectable;
+use Kabuto\Database\DB;
+
+#[Injectable()]
+final class {{ class }}
+{
+    public function __construct(private readonly DB $db)
+    {
+    }
+
+    public function all(): array
+    {
+        return $this->db->{{ modelVar }}->findMany();
+    }
+
+    public function find(string|int $id): ?array
+    {
+        return $this->db->{{ modelVar }}->findUnique(['where' => ['{{ pk }}' => $id]]);
+    }
+
+    public function create(array $data): array
+    {
+        return $this->db->{{ modelVar }}->create(['data' => $data]);
+    }
+
+    public function update(string|int $id, array $data): ?array
+    {
+        return $this->db->{{ modelVar }}->update(['where' => ['{{ pk }}' => $id], 'data' => $data]);
+    }
+
+    public function delete(string|int $id): int
+    {
+        return $this->db->{{ modelVar }}->delete(['where' => ['{{ pk }}' => $id]]);
+    }
+}

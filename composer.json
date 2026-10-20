@@ -1,0 +1,44 @@
+{
+    "name": "kabuto/framework",
+    "description": "A zero-dependency, NestJS-style micro framework for PHP.",
+    "type": "library",
+    "support": {
+        "source": "https://github.com/kabuto-php/kabuto"
+    },
+    "license": "MIT",
+    "require": {
+        "php": ">=8.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kabuto\\": "core/"
+        },
+        "files": [
+            "core/Support/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "App\\": "app/",
+            "Kabuto\\Tests\\": "tests/"
+        }
+    },
+    "bin": [
+        "kabuto"
+    ],
+    "scripts": {
+        "serve": "php kabuto serve",
+        "test": "php kabuto test",
+        "lint": "php tools/php-lint.php",
+        "analyse": "phpstan analyse --configuration=phpstan.neon.dist",
+        "style:check": "php tools/style-check.php && phpcs --standard=phpcs.xml.dist",
+        "validate-metadata": "php tools/validate-composer.php",
+        "check": [
+            "@validate-metadata",
+            "@lint",
+            "@style:check",
+            "@analyse",
+            "@test"
+        ]
+    }
+}

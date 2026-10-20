@@ -1,0 +1,16 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use Kabuto\Common\Module;
+
+#[Module(
+    controllers: [{{ module }}Controller::class],
+    providers: [{{ module }}Service::class, {{ module }}Repository::class],
+    exports: [{{ module }}Service::class],
+)]
+final class {{ class }}
+{
+}
