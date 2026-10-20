@@ -187,25 +187,6 @@ CI juga menjalankan PHPStan dan PHP_CodeSniffer pada runner GitHub. PHPStan base
 
 ---
 
-## 📚 Situs Dokumentasi Lengkap
- 
-Dokumentasi lengkap dua bahasa (**Bahasa Indonesia & English**) dibangun menggunakan VitePress yang ultra-ringan dan tersedia di folder `docs/`:
- 
-```bash
-cd docs
-npm install
-npm run dev        # http://localhost:5173
-```
- 
-Untuk mem-build versi statis produksi:
- 
-```bash
-npm run build
-```
-
-Panduan utama tersedia untuk [konfigurasi](../docs/docs/api-reference/config-reference.md), [production checklist](../docs/docs/getting-started/production-checklist.md), [upload security](../docs/docs/features/upload-security.md), dan [troubleshooting](../docs/docs/advanced/troubleshooting.md) dalam locale Indonesia dan English.
-
----
 
 ## 📄 Lisensi
 
