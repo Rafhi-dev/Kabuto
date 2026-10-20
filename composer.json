@@ -33,6 +33,7 @@
     ],
     "scripts": {
         "serve": "php kabuto serve",
+        "build:runtime": "cd bin/runtime && go build -o ../kabuto-server -ldflags=\"-s -w\" main.go",
         "test": "php kabuto test",
         "lint": "php tools/php-lint.php",
         "analyse": "phpstan analyse --configuration=phpstan.neon.dist",

@@ -16,6 +16,7 @@ use Kabuto\Runtime\WorkerServer;
  *   php kabuto serve --workers=auto*2
  *   php kabuto serve --workers=4 --driver=revolt
  *   php kabuto serve --workers=4 --driver=openswoole
+ *   php kabuto serve --workers=4 --driver=go
  *   php kabuto serve --workers=4 --max-requests=100000
  *   php kabuto serve --port=8080 --host=0.0.0.0
  *   php kabuto serve --traditional
@@ -57,6 +58,38 @@ final class ServeCommand extends Command
             $indexFile = escapeshellarg($this->console->basePath() . '/public/index.php');
             passthru(sprintf('php -S %s:%d -t %s %s', $host, $port, $publicDir, $indexFile));
             return 0;
+        }
+
+        if (strtolower($driver) === 'go') {
+            $basePath = $this->console->basePath();
+            $binName = DIRECTORY_SEPARATOR === '\\' ? 'kabuto-server.exe' : 'kabuto-server';
+            $binPath = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $binName;
+
+            if (!is_file($binPath)) {
+                $this->info('Compiling Kabuto Go runtime binary...');
+                $runtimeDir = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'runtime';
+                $buildCmd = sprintf('cd %s && go build -o %s -ldflags="-s -w" main.go', escapeshellarg($runtimeDir), escapeshellarg($binPath));
+                @exec($buildCmd, $buildOutput, $buildStatus);
+                if ($buildStatus !== 0 || !is_file($binPath)) {
+                    $this->error('Failed to compile Go runtime. Ensure Go is installed and accessible in PATH.');
+                    return 1;
+                }
+                $this->info('Go runtime compiled successfully.');
+            }
+
+            $cmd = sprintf(
+                '%s --host=%s --port=%d --workers=%s --max-requests=%d --base-path=%s --php-bin=%s',
+                escapeshellarg($binPath),
+                escapeshellarg($host),
+                $port,
+                escapeshellarg((string) $rawWorkers),
+                $maxRequests,
+                escapeshellarg($basePath),
+                escapeshellarg(PHP_BINARY)
+            );
+
+            passthru($cmd, $exitCode);
+            return $exitCode;
         }
 
         $app = $this->console->app();

@@ -6,3 +6,6 @@ database/*.db
 /storage/app/
 /public/storage
 database/migrations/.keep
+
+bin/kabuto-server
+bin/kabuto-server.exe
