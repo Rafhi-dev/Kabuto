@@ -14,6 +14,7 @@ use Kabuto\Runtime\WorkerServer;
  *   php kabuto serve
  *   php kabuto serve --workers=auto
  *   php kabuto serve --workers=auto*2
+ *   php kabuto serve --workers=4 --driver=revolt
  *   php kabuto serve --workers=4 --max-requests=100000
  *   php kabuto serve --port=8080 --host=0.0.0.0
  *   php kabuto serve --traditional
@@ -43,6 +44,12 @@ final class ServeCommand extends Command
         $defaultMax = is_numeric($envMax) ? (int) $envMax : 100000;
         $maxRequests = (int) $this->option('max-requests', (string) $defaultMax);
 
+        $driverOption = $this->option('driver');
+        $envDriver = env('SERVER_RUNTIME');
+        $driver = (string) ($driverOption ?? $envDriver ?? 'auto');
+
+        $isInternalWorker = $this->flag('internal-worker');
+
         if ($this->flag('traditional')) {
             $this->info(sprintf('Starting PHP built-in server on http://%s:%d...', $host, $port));
             $publicDir = escapeshellarg($this->console->basePath() . '/public');
@@ -70,21 +77,29 @@ final class ServeCommand extends Command
             $app,
             $host,
             $port,
-            $workers,
+            $isInternalWorker ? 1 : $workers,
             $maxRequests,
             $publicDir,
+            $driver,
+            $isInternalWorker,
         );
 
-        $server->start(function (string $address) use ($host, $port, $workers, $maxRequests): void {
-            $cores = WorkerServer::detectCpuCores();
+        $server->start(function (string $address) use ($host, $port, $workers, $maxRequests, $server, $isInternalWorker): void {
+            if ($isInternalWorker) {
+                return;
+            }
 
-            if (function_exists('pcntl_fork')) {
-                $workerLabel = sprintf('%d workers (Multi-process cluster — %d CPU cores detected)', $workers, $cores);
+            $cores = WorkerServer::detectCpuCores();
+            $driverName = $server->getDriverName();
+
+            if ($workers > 1) {
+                if (function_exists('pcntl_fork')) {
+                    $workerLabel = sprintf('%d workers (Unix pcntl cluster + %s) — %d CPU cores detected', $workers, $driverName, $cores);
+                } else {
+                    $workerLabel = sprintf('%d workers (Windows proc_open cluster + %s) — %d CPU cores detected', $workers, $driverName, $cores);
+                }
             } else {
-                $workerLabel = sprintf(
-                    '1 worker (Async loop) — %d CPU cores detected (Cluster multi-worker butuh Linux/WSL/Docker dengan pcntl)',
-                    $cores
-                );
+                $workerLabel = sprintf('1 worker (%s) — %d CPU cores detected', $driverName, $cores);
             }
 
             $maxRequestsLabel = $maxRequests > 0

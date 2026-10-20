@@ -9,6 +9,9 @@
     "require": {
         "php": ">=8.2"
     },
+    "suggest": {
+        "revolt/event-loop": "Enables the high-performance fiber-based Revolt event-loop runtime on Windows and Linux."
+    },
     "autoload": {
         "psr-4": {
             "Kabuto\\": "core/"

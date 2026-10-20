@@ -8,14 +8,18 @@ use Closure;
 use Kabuto\Application;
 use Kabuto\Http\Request;
 use Kabuto\Http\Response;
+use Kabuto\Runtime\Drivers\NativeDriver;
+use Kabuto\Runtime\Drivers\RevoltDriver;
+use Kabuto\Runtime\Drivers\RuntimeDriverInterface;
+use RuntimeException;
 use Throwable;
 
 /**
  * High-performance, zero-dependency persistent HTTP worker server for Kabuto.
  *
  * Keeps the framework in memory across requests, utilizing non-blocking
- * socket streams (stream_select) and optional multi-process clustering
- * via pcntl_fork to deliver high RPS and low memory usage comparable to Go.
+ * socket streams (stream_select or optional Revolt event loop) and multi-process
+ * clustering via pcntl_fork (Unix) or proc_open (Windows) to deliver high RPS.
  */
 final class WorkerServer
 {
@@ -24,21 +28,16 @@ final class WorkerServer
     private int $workers;
     private int $maxRequests;
     private string $publicDir;
+    private string $driverName;
+    private RuntimeDriverInterface $driverInstance;
+    private bool $isInternalWorker;
     private bool $running = false;
     private bool $isClusterWorker = false;
     private int $requestCount = 0;
+    private ?ProcClusterManager $clusterManager = null;
 
     private const MAX_HEADER_BYTES = 64 * 1024;
     private const MAX_BODY_BYTES = 10 * 1024 * 1024;
-
-    /** @var array<int,resource> */
-    private array $connections = [];
-
-    /** @var array<int,string> */
-    private array $buffers = [];
-
-    /** @var array<int,array{peer:string,time:int}> */
-    private array $meta = [];
 
     /** @var array<string,string> */
     private static array $mimeTypes = [
@@ -69,12 +68,41 @@ final class WorkerServer
         string|int $workers = 'auto',
         int $maxRequests = 100000,
         ?string $publicDir = null,
+        string $driver = 'auto',
+        bool $isInternalWorker = false,
     ) {
         $this->host = $host;
         $this->port = $port;
         $this->workers = is_int($workers) && $workers > 0 ? $workers : self::resolveWorkers($workers);
         $this->maxRequests = max(0, $maxRequests);
         $this->publicDir = $publicDir ?? ($this->app->basePath() . '/public');
+        $this->driverName = strtolower(trim($driver));
+        $this->driverInstance = self::resolveDriver($this->driverName);
+        $this->isInternalWorker = $isInternalWorker;
+    }
+
+    /**
+     * Resolve the runtime event loop driver.
+     */
+    public static function resolveDriver(string $driver = 'auto'): RuntimeDriverInterface
+    {
+        $d = strtolower(trim($driver));
+
+        if ($d === 'revolt') {
+            if (!RevoltDriver::isSupported()) {
+                throw new RuntimeException(
+                    'The Revolt runtime driver requires the "revolt/event-loop" package. ' .
+                    'Install it via Composer: composer require revolt/event-loop'
+                );
+            }
+            return new RevoltDriver();
+        }
+
+        if ($d === 'auto' && RevoltDriver::isSupported()) {
+            return new RevoltDriver();
+        }
+
+        return new NativeDriver();
     }
 
     /**
@@ -177,6 +205,46 @@ final class WorkerServer
         return $this->requestCount;
     }
 
+    public function incrementRequestCount(): int
+    {
+        return ++$this->requestCount;
+    }
+
+    public function resetRequestCount(): void
+    {
+        $this->requestCount = 0;
+    }
+
+    public function shouldRecycle(): bool
+    {
+        return $this->maxRequests > 0 && $this->requestCount >= $this->maxRequests;
+    }
+
+    public function isRunning(): bool
+    {
+        return $this->running;
+    }
+
+    public function isClusterWorker(): bool
+    {
+        return $this->isClusterWorker;
+    }
+
+    public function setIsClusterWorker(bool $val): void
+    {
+        $this->isClusterWorker = $val;
+    }
+
+    public function getDriver(): RuntimeDriverInterface
+    {
+        return $this->driverInstance;
+    }
+
+    public function getDriverName(): string
+    {
+        return $this->driverInstance->name();
+    }
+
     /**
      * Start the worker server.
      *
@@ -201,25 +269,58 @@ final class WorkerServer
         );
 
         if ($serverSocket === false) {
-            throw new \RuntimeException(sprintf('Failed to bind server on [%s]: %s (Code: %d)', $address, $errstr, $errno));
+            throw new RuntimeException(sprintf('Failed to bind server on [%s]: %s (Code: %d)', $address, $errstr, $errno));
         }
 
         stream_set_blocking($serverSocket, false);
 
-        if ($onStart !== null) {
-            $onStart($address);
-        }
-
         $this->running = true;
 
-        // Multi-process cluster for Unix / Linux / macOS
-        if ($this->workers > 1 && function_exists('pcntl_fork')) {
-            $this->runCluster($serverSocket);
+        // If this is an internal child worker spawned by ProcClusterManager:
+        if ($this->isInternalWorker) {
+            $this->isClusterWorker = true;
+            $this->driverInstance->loop($serverSocket, $this);
             return;
         }
 
-        // Single process event loop (Windows / Single worker)
-        $this->eventLoop($serverSocket);
+        // Multi-process cluster for Unix / Linux / macOS (pcntl)
+        if ($this->workers > 1 && function_exists('pcntl_fork')) {
+            if ($onStart !== null) {
+                $onStart($address);
+            }
+            $this->runPcntlCluster($serverSocket);
+            return;
+        }
+
+        // Multi-process cluster for Windows / environments without pcntl (proc_open)
+        if ($this->workers > 1) {
+            $this->clusterManager = new ProcClusterManager(
+                $this->host,
+                $this->port,
+                $this->workers,
+                $this->maxRequests,
+                $this->app->basePath(),
+                $this->driverName
+            );
+            $this->clusterManager->start($serverSocket, $onStart);
+            return;
+        }
+
+        // Single process event loop
+        if ($onStart !== null) {
+            $onStart($address);
+        }
+        $this->driverInstance->loop($serverSocket, $this);
+    }
+
+    /**
+     * Compatibility wrapper for single-worker event loop.
+     *
+     * @param resource $serverSocket
+     */
+    public function eventLoop($serverSocket): void
+    {
+        $this->driverInstance->loop($serverSocket, $this);
     }
 
     /**
@@ -250,95 +351,64 @@ final class WorkerServer
             $response = new Response();
             $response->status(500);
             $response->json([
-                'status' => 'error',
-                'message' => $e->getMessage(),
+                'statusCode' => 500,
+                'error'      => 'Internal Server Error',
+                'message'    => $e->getMessage(),
             ]);
             return $response;
-        } finally {
-            if ($this->app->container()->has(\Kabuto\Database\ConnectionManager::class)) {
-                try {
-                    $cm = $this->app->container()->get(\Kabuto\Database\ConnectionManager::class);
-                    foreach ($cm->activeConnections() as $pdo) {
-                        if ($pdo->inTransaction()) {
-                            $pdo->rollBack();
-                        }
-                    }
-                } catch (\Throwable) {
-                }
-            }
         }
     }
 
     /**
-     * Format a Kabuto Response into an HTTP/1.1 wire string.
+     * Try to serve a static file from public/ directly.
      */
-    public function formatHttpResponse(Response $response, bool $keepAlive = true): string
+    public function serveStaticFile(string $uri): ?Response
     {
-        $status = $response->getStatus();
-        $statusText = match ($status) {
-            200 => 'OK',
-            201 => 'Created',
-            202 => 'Accepted',
-            204 => 'No Content',
-            301 => 'Moved Permanently',
-            302 => 'Found',
-            304 => 'Not Modified',
-            400 => 'Bad Request',
-            401 => 'Unauthorized',
-            403 => 'Forbidden',
-            404 => 'Not Found',
-            405 => 'Method Not Allowed',
-            422 => 'Unprocessable Entity',
-            500 => 'Internal Server Error',
-            502 => 'Bad Gateway',
-            503 => 'Service Unavailable',
-            default => 'OK',
-        };
+        $decoded = rawurldecode($uri);
+        $clean = preg_replace('#/+#', '/', $decoded) ?? $decoded;
 
-        $body = $response->getBody();
-        $headers = $response->headers();
-
-        $hasContentType = false;
-        foreach (array_keys($headers) as $k) {
-            if (strcasecmp($k, 'content-type') === 0) {
-                $hasContentType = true;
-                break;
-            }
-        }
-        if (!$hasContentType && $status !== 204) {
-            $headers['Content-Type'] = 'text/html; charset=utf-8';
+        if (str_contains($clean, '..') || str_contains($clean, "\0")) {
+            return null;
         }
 
-        $headers['Content-Length'] = (string) strlen($body);
-        $headers['Connection'] = $keepAlive ? 'keep-alive' : 'close';
-        $headers['Server'] = 'Kabuto-Worker/1.0';
+        $fullPath = rtrim($this->publicDir, '/\\') . DIRECTORY_SEPARATOR . ltrim(str_replace('/', DIRECTORY_SEPARATOR, $clean), '\\/');
 
-        $output = sprintf("HTTP/1.1 %d %s\r\n", $status, $statusText);
-        foreach ($headers as $key => $val) {
-            if (strcasecmp($key, 'Set-Cookie') === 0) {
-                continue;
-            }
-            $output .= sprintf("%s: %s\r\n", $key, $val);
+        if (!is_file($fullPath)) {
+            return null;
         }
-        foreach ($response->cookieHeaders() as $cookieHeader) {
-            $output .= sprintf("Set-Cookie: %s\r\n", $cookieHeader);
-        }
-        $output .= "\r\n";
-        $output .= $body;
 
-        return $output;
+        $realPublic = realpath($this->publicDir);
+        $realFile = realpath($fullPath);
+
+        if ($realPublic === false || $realFile === false || !str_starts_with($realFile, $realPublic)) {
+            return null;
+        }
+
+        $ext = strtolower(pathinfo($realFile, PATHINFO_EXTENSION));
+        $contentType = self::$mimeTypes[$ext] ?? 'application/octet-stream';
+
+        $content = @file_get_contents($realFile);
+        if ($content === false) {
+            return null;
+        }
+
+        $res = new Response();
+        $res->status(200);
+        $res->header('Content-Type', $contentType);
+        $res->header('Content-Length', (string) strlen($content));
+        $res->header('Cache-Control', 'public, max-age=3600');
+        $res->send($content);
+
+        return $res;
     }
 
     /**
-     * Determine if a buffer contains a complete HTTP request and find its boundary.
-     *
-     * @param ?int $requestLength Output parameter: byte length of the complete request
+     * Check if a buffer contains a full, well-formed HTTP request.
      */
-    public function isRequestComplete(string $buffer, ?int &$requestLength = null): bool
+    public function isRequestComplete(string $buffer, int &$requestLength): bool
     {
-        if (strlen($buffer) > self::MAX_HEADER_BYTES + self::MAX_BODY_BYTES) {
-            return false;
-        }
+        $requestLength = 0;
+
         $delimiterPos = strpos($buffer, "\r\n\r\n");
         $delimiterLen = 4;
 
@@ -348,18 +418,23 @@ final class WorkerServer
         }
 
         if ($delimiterPos === false) {
+            if (strlen($buffer) > self::MAX_HEADER_BYTES) {
+                $requestLength = strlen($buffer);
+                return true;
+            }
             return false;
         }
 
         $headerSection = substr($buffer, 0, $delimiterPos);
-        $bodyLength = 0;
 
+        $bodyLength = 0;
         if (preg_match('/content-length:\s*(\d+)/i', $headerSection, $match)) {
             $bodyLength = (int) $match[1];
         }
 
         if (strlen($headerSection) > self::MAX_HEADER_BYTES || $bodyLength > self::MAX_BODY_BYTES) {
-            return false;
+            $requestLength = strlen($buffer);
+            return true;
         }
 
         $totalLength = $delimiterPos + $delimiterLen + $bodyLength;
@@ -373,157 +448,91 @@ final class WorkerServer
     }
 
     /**
-     * Attempt to serve a static file from public/ directory.
+     * Serialize a Kabuto Response object into an HTTP/1.1 wire protocol string.
      */
-    public function serveStaticFile(string $path): ?Response
+    public function formatHttpResponse(Response $response, bool $keepAlive = true): string
     {
-        if ($this->publicDir === '' || !is_dir($this->publicDir)) {
-            return null;
+        $status = $response->getStatus();
+        $reason = self::getReasonPhrase($status);
+        $headers = $response->headers();
+        $body = $response->getBody();
+
+        if (!isset($headers['Date'])) {
+            $headers['Date'] = gmdate('D, d M Y H:i:s') . ' GMT';
         }
 
-        $cleanPath = ltrim(parse_url($path, PHP_URL_PATH) ?: '', '/');
-        if ($cleanPath === '') {
-            return null;
+        if (!isset($headers['Server'])) {
+            $headers['Server'] = 'Kabuto-Worker/1.0';
         }
 
-        $candidate = $this->publicDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $cleanPath);
-        $real = realpath($candidate);
-        $realPublic = realpath($this->publicDir);
+        $headers['Connection'] = $keepAlive ? 'keep-alive' : 'close';
 
-        $rootPrefix = $realPublic === false ? '' : rtrim($realPublic, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
-        if ($real === false || $realPublic === false || !str_starts_with($real, $rootPrefix)) {
-            return null;
+        if (!isset($headers['Content-Length'])) {
+            $headers['Content-Length'] = (string) strlen($body);
         }
 
-        if (!is_file($real)) {
-            return null;
+        $cookies = $response->getCookies();
+        $cookieHeaders = [];
+        foreach ($cookies as $c) {
+            $str = $c['name'] . '=' . rawurlencode($c['value']);
+            if (!empty($c['expires'])) {
+                $str .= '; Expires=' . gmdate('D, d M Y H:i:s T', $c['expires']);
+            }
+            if (!empty($c['path'])) {
+                $str .= '; Path=' . $c['path'];
+            }
+            if (!empty($c['domain'])) {
+                $str .= '; Domain=' . $c['domain'];
+            }
+            if (!empty($c['secure'])) {
+                $str .= '; Secure';
+            }
+            if (!empty($c['httponly'])) {
+                $str .= '; HttpOnly';
+            }
+            if (!empty($c['samesite'])) {
+                $str .= '; SameSite=' . $c['samesite'];
+            }
+            $cookieHeaders[] = 'Set-Cookie: ' . $str;
         }
 
-        $ext = strtolower(pathinfo($real, PATHINFO_EXTENSION));
-        $mime = self::$mimeTypes[$ext] ?? 'application/octet-stream';
+        $output = sprintf("HTTP/1.1 %d %s\r\n", $status, $reason);
 
-        $response = new Response();
-        $response->status(200);
-        $response->header('Content-Type', $mime);
-        $response->send((string) file_get_contents($real));
+        foreach ($headers as $k => $v) {
+            $output .= sprintf("%s: %s\r\n", $k, $v);
+        }
 
-        return $response;
+        foreach ($cookieHeaders as $ch) {
+            $output .= $ch . "\r\n";
+        }
+
+        $output .= "\r\n";
+        $output .= $body;
+
+        return $output;
     }
 
-    /**
-     * The core event loop: handles socket select, accepts clients, parses and emits.
-     *
-     * @param resource $serverSocket
-     */
-    private function eventLoop($serverSocket): void
+    private static function getReasonPhrase(int $status): string
     {
-        while ($this->running) {
-            $read = $this->connections;
-            $read[(int) $serverSocket] = $serverSocket;
-            $write = null;
-            $except = null;
-
-            $numChanged = @stream_select($read, $write, $except, 1);
-
-            if ($numChanged === false) {
-                // When k6 or clients abort sockets abruptly, purge invalid/dead sockets and continue
-                foreach ($this->connections as $connId => $conn) {
-                    if (!is_resource($conn) || @feof($conn)) {
-                        $this->closeConnection($connId);
-                    }
-                }
-                continue;
-            }
-
-            if ($numChanged === 0) {
-                $this->cleanIdleConnections(5);
-                continue;
-            }
-
-            // Accept new incoming connections
-            if (isset($read[(int) $serverSocket])) {
-                while (($client = @stream_socket_accept($serverSocket, 0, $peerName)) !== false) {
-                    stream_set_blocking($client, false);
-
-                    // Prevent socket descriptor saturation under extreme load
-                    if (count($this->connections) >= 1000) {
-                        $this->cleanIdleConnections(1);
-                    }
-
-                    $id = (int) $client;
-                    $this->connections[$id] = $client;
-                    $this->buffers[$id] = '';
-                    $this->meta[$id] = [
-                        'peer' => (string) $peerName,
-                        'time' => time(),
-                    ];
-                }
-                unset($read[(int) $serverSocket]);
-            }
-
-            // Process data from connected clients
-            foreach ($read as $id => $client) {
-                $data = @fread($client, 65536);
-
-                if ($data === false || $data === '') {
-                    if (!is_resource($client) || feof($client)) {
-                        $this->closeConnection($id);
-                    }
-                    continue;
-                }
-
-                $this->buffers[$id] .= $data;
-                $this->meta[$id]['time'] = time();
-
-                $reqLength = 0;
-                while ($this->isRequestComplete($this->buffers[$id], $reqLength)) {
-                    $rawRequest = substr($this->buffers[$id], 0, $reqLength);
-                    $this->buffers[$id] = substr($this->buffers[$id], $reqLength);
-
-                    $keepAlive = !preg_match('/connection:\s*close/i', $rawRequest);
-                    $response = $this->handleRawRequest($rawRequest, $this->meta[$id]['peer'] ?? '');
-                    $wire = $this->formatHttpResponse($response, $keepAlive);
-
-                    $written = @fwrite($client, $wire);
-                    if ($written === false || $written < strlen($wire)) {
-                        $this->closeConnection($id);
-                        break;
-                    }
-
-                    $this->requestCount++;
-
-                    if (!$keepAlive) {
-                        $this->closeConnection($id);
-                        break;
-                    }
-
-                    if ($this->maxRequests > 0 && $this->requestCount >= $this->maxRequests) {
-                        // In multi-process cluster mode, exit child worker so master process respawns it
-                        if ($this->isClusterWorker) {
-                            $this->running = false;
-                            break 2;
-                        }
-
-                        // In single-process / standalone mode (e.g. Windows), perform soft-recycle:
-                        // run garbage collection and reset request counter without killing the server
-                        gc_collect_cycles();
-                        $this->requestCount = 0;
-                    }
-                }
-            }
-
-            // Trigger garbage collection periodically
-            if ($this->requestCount > 0 && ($this->requestCount % 100) === 0) {
-                gc_collect_cycles();
-            }
-
-            $this->cleanIdleConnections(5);
-        }
-
-        $this->closeAll();
-        if (is_resource($serverSocket)) {
-            @fclose($serverSocket);
-        }
+        return match ($status) {
+            200 => 'OK',
+            201 => 'Created',
+            204 => 'No Content',
+            301 => 'Moved Permanently',
+            302 => 'Found',
+            304 => 'Not Modified',
+            400 => 'Bad Request',
+            401 => 'Unauthorized',
+            403 => 'Forbidden',
+            404 => 'Not Found',
+            405 => 'Method Not Allowed',
+            422 => 'Unprocessable Entity',
+            429 => 'Too Many Requests',
+            500 => 'Internal Server Error',
+            502 => 'Bad Gateway',
+            503 => 'Service Unavailable',
+            default => 'Unknown',
+        };
     }
 
     /**
@@ -531,20 +540,20 @@ final class WorkerServer
      *
      * @param resource $serverSocket
      */
-    private function runCluster($serverSocket): void
+    private function runPcntlCluster($serverSocket): void
     {
         $children = [];
 
         for ($i = 0; $i < $this->workers; $i++) {
             $pid = pcntl_fork();
             if ($pid === -1) {
-                throw new \RuntimeException('Failed to fork worker process.');
+                throw new RuntimeException('Failed to fork worker process.');
             }
 
             if ($pid === 0) {
                 // Child worker process
                 $this->isClusterWorker = true;
-                $this->eventLoop($serverSocket);
+                $this->driverInstance->loop($serverSocket, $this);
                 exit(0);
             }
 
@@ -560,7 +569,7 @@ final class WorkerServer
                     $newPid = pcntl_fork();
                     if ($newPid === 0) {
                         $this->isClusterWorker = true;
-                        $this->eventLoop($serverSocket);
+                        $this->driverInstance->loop($serverSocket, $this);
                         exit(0);
                     }
                     $children[$newPid] = true;
@@ -569,39 +578,14 @@ final class WorkerServer
         }
     }
 
-    private function cleanIdleConnections(int $timeoutSeconds = 5): void
-    {
-        $now = time();
-        foreach ($this->meta as $id => $info) {
-            if (($now - $info['time']) > $timeoutSeconds) {
-                $this->closeConnection($id);
-            }
-        }
-    }
-
-    private function closeConnection(int $id): void
-    {
-        if (isset($this->connections[$id])) {
-            @fclose($this->connections[$id]);
-            unset($this->connections[$id]);
-        }
-        unset($this->buffers[$id], $this->meta[$id]);
-    }
-
-    private function closeAll(): void
-    {
-        foreach ($this->connections as $client) {
-            if (is_resource($client)) {
-                @fclose($client);
-            }
-        }
-        $this->connections = [];
-        $this->buffers = [];
-        $this->meta = [];
-    }
-
     public function stop(): void
     {
         $this->running = false;
+        if ($this->clusterManager !== null) {
+            $this->clusterManager->stop();
+        }
+        if ($this->driverInstance !== null) {
+            $this->driverInstance->stop();
+        }
     }
 }
