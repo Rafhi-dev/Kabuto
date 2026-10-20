@@ -1,0 +1,25 @@
+version: '3'
+
+rpc:
+  listen: tcp://127.0.0.1:6001
+
+server:
+  command: "php kabuto serve --driver=roadrunner"
+  relay: "pipes"
+
+http:
+  address: "0.0.0.0:8000"
+  max_request_size: 100
+  middleware: ["static"]
+  static:
+    dir: "public"
+    forbid: [".php"]
+  pool:
+    num_workers: 4
+    max_jobs: 100000
+    allocate_timeout: 60s
+    destroy_timeout: 60s
+
+logs:
+  mode: development
+  level: info

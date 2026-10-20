@@ -12,7 +12,8 @@
     },
     "suggest": {
         "revolt/event-loop": "Enables the high-performance fiber-based Revolt event-loop runtime on Windows and Linux.",
-        "ext-openswoole": "Enables the ultra-high-performance C++ coroutine HTTP runtime on Linux/Docker (pecl install openswoole)."
+        "ext-openswoole": "Enables the ultra-high-performance C++ coroutine HTTP runtime on Linux/Docker (pecl install openswoole).",
+        "spiral/roadrunner-http": "Enables official RoadRunner worker integration (or use Kabuto built-in zero-dependency RoadRunner driver)."
     },
     "autoload": {
         "psr-4": {
@@ -33,7 +34,6 @@
     ],
     "scripts": {
         "serve": "php kabuto serve",
-        "build:runtime": "cd bin/runtime && go build -o ../kabuto-server -ldflags=\"-s -w\" main.go",
         "test": "php kabuto test",
         "lint": "php tools/php-lint.php",
         "analyse": "phpstan analyse --configuration=phpstan.neon.dist",

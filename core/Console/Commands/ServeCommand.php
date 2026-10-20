@@ -16,7 +16,7 @@ use Kabuto\Runtime\WorkerServer;
  *   php kabuto serve --workers=auto*2
  *   php kabuto serve --workers=4 --driver=revolt
  *   php kabuto serve --workers=4 --driver=openswoole
- *   php kabuto serve --workers=4 --driver=go
+ *   php kabuto serve --workers=4 --driver=roadrunner
  *   php kabuto serve --workers=4 --max-requests=100000
  *   php kabuto serve --port=8080 --host=0.0.0.0
  *   php kabuto serve --traditional
@@ -60,36 +60,73 @@ final class ServeCommand extends Command
             return 0;
         }
 
-        if (strtolower($driver) === 'go') {
+        if (strtolower($driver) === 'roadrunner') {
             $basePath = $this->console->basePath();
-            $binName = DIRECTORY_SEPARATOR === '\\' ? 'kabuto-server.exe' : 'kabuto-server';
-            $binPath = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $binName;
+            $publicDir = $basePath . '/public';
 
-            if (!is_file($binPath)) {
-                $this->info('Compiling Kabuto Go runtime binary...');
-                $runtimeDir = $basePath . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'runtime';
-                $buildCmd = sprintf('cd %s && go build -o %s -ldflags="-s -w" main.go', escapeshellarg($runtimeDir), escapeshellarg($binPath));
-                @exec($buildCmd, $buildOutput, $buildStatus);
-                if ($buildStatus !== 0 || !is_file($binPath)) {
-                    $this->error('Failed to compile Go runtime. Ensure Go is installed and accessible in PATH.');
-                    return 1;
+            // If already spawned by RoadRunner daemon (worker mode):
+            if (\Kabuto\Runtime\Drivers\RoadRunnerDriver::isInsideRoadRunner()) {
+                $app = $this->console->app();
+                $app->use(\Kabuto\Middleware\Cors::class);
+                $app->use(\Kabuto\Middleware\RequestId::class);
+                $app->use(\Kabuto\Middleware\JsonBody::class);
+
+                $routesFile = $basePath . '/routes/api.php';
+                if (is_file($routesFile)) {
+                    (static function (string $__file, \Kabuto\Application $app): void {
+                        $router = $app->router();
+                        require $__file;
+                    })($routesFile, $app);
                 }
-                $this->info('Go runtime compiled successfully.');
+
+                $server = new WorkerServer($app, $host, $port, 1, $maxRequests, $publicDir, 'roadrunner');
+                $server->start();
+                return 0;
             }
 
-            $cmd = sprintf(
-                '%s --host=%s --port=%d --workers=%s --max-requests=%d --base-path=%s --php-bin=%s',
-                escapeshellarg($binPath),
-                escapeshellarg($host),
-                $port,
-                escapeshellarg((string) $rawWorkers),
-                $maxRequests,
-                escapeshellarg($basePath),
-                escapeshellarg(PHP_BINARY)
-            );
+            // Otherwise, user invoked `php kabuto serve --driver=roadrunner` directly:
+            $rrBin = DIRECTORY_SEPARATOR === '\\' ? 'rr.exe' : 'rr';
+            $localRr = $basePath . DIRECTORY_SEPARATOR . $rrBin;
 
-            passthru($cmd, $exitCode);
-            return $exitCode;
+            $hasRr = is_file($localRr) || is_file($basePath . '/vendor/bin/' . $rrBin);
+            if (!$hasRr) {
+                // Check in system PATH
+                @exec(DIRECTORY_SEPARATOR === '\\' ? 'where rr 2>NUL' : 'which rr 2>/dev/null', $whereOut, $whereCode);
+                $hasRr = ($whereCode === 0 && !empty($whereOut));
+            }
+
+            $configFile = $basePath . DIRECTORY_SEPARATOR . '.rr.yaml';
+
+            if ($hasRr) {
+                $this->info('Starting RoadRunner server using .rr.yaml...');
+                $executable = is_file($localRr) ? $localRr : 'rr';
+                $cmd = sprintf('%s serve -c %s', escapeshellarg($executable), escapeshellarg($configFile));
+                passthru($cmd, $exitCode);
+                return $exitCode;
+            }
+
+            $this->line();
+            $this->line("\033[1;36m  _  __     _           _        \033[0m");
+            $this->line("\033[1;36m | |/ /    | |         | |       \033[0m");
+            $this->line("\033[1;36m | ' / __ _| |__  _   _| |_ ___  \033[0m");
+            $this->line("\033[1;36m |  < / _` | '_ \\| | | | __/ _ \\ \033[0m");
+            $this->line("\033[1;36m | . \\ (_| | |_) | |_| | || (_) |\033[0m");
+            $this->line("\033[1;36m |_|\\_\\__,_|_.__/ \\__,_|\\__\\___/ \033[0m");
+            $this->line();
+            $this->line("  \033[1;32m⚡ Kabuto RoadRunner Runtime Ready\033[0m");
+            $this->line("  ─────────────────────────────────────────────────────────────");
+            $this->line("  Configuration file: \033[1m.rr.yaml\033[0m");
+            $this->line();
+            $this->line("  To launch RoadRunner, install the 'rr' binary:");
+            $this->line("    \033[1m• Linux/macOS/WSL:\033[0m curl -s https://get.roadrunner.dev | sh");
+            $this->line("    \033[1m• Windows (winget):\033[0m winget install Spiral.RoadRunner");
+            $this->line("    \033[1m• GitHub release:\033[0m   https://github.com/roadrunner-server/roadrunner/releases");
+            $this->line();
+            $this->line("  Then run:");
+            $this->line("    \033[1m./rr serve\033[0m");
+            $this->line("  ─────────────────────────────────────────────────────────────");
+            $this->line();
+            return 0;
         }
 
         $app = $this->console->app();
