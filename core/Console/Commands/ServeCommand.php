@@ -16,7 +16,6 @@ use Kabuto\Runtime\WorkerServer;
  *   php kabuto serve --workers=auto*2
  *   php kabuto serve --workers=4 --driver=revolt
  *   php kabuto serve --workers=4 --driver=openswoole
- *   php kabuto serve --workers=4 --driver=roadrunner
  *   php kabuto serve --workers=4 --max-requests=100000
  *   php kabuto serve --port=8080 --host=0.0.0.0
  *   php kabuto serve --traditional
@@ -57,75 +56,6 @@ final class ServeCommand extends Command
             $publicDir = escapeshellarg($this->console->basePath() . '/public');
             $indexFile = escapeshellarg($this->console->basePath() . '/public/index.php');
             passthru(sprintf('php -S %s:%d -t %s %s', $host, $port, $publicDir, $indexFile));
-            return 0;
-        }
-
-        if (strtolower($driver) === 'roadrunner') {
-            $basePath = $this->console->basePath();
-            $publicDir = $basePath . '/public';
-
-            // If already spawned by RoadRunner daemon (worker mode):
-            if (\Kabuto\Runtime\Drivers\RoadRunnerDriver::isInsideRoadRunner()) {
-                $app = $this->console->app();
-                $app->use(\Kabuto\Middleware\Cors::class);
-                $app->use(\Kabuto\Middleware\RequestId::class);
-                $app->use(\Kabuto\Middleware\JsonBody::class);
-
-                $routesFile = $basePath . '/routes/api.php';
-                if (is_file($routesFile)) {
-                    (static function (string $__file, \Kabuto\Application $app): void {
-                        $router = $app->router();
-                        require $__file;
-                    })($routesFile, $app);
-                }
-
-                $server = new WorkerServer($app, $host, $port, 1, $maxRequests, $publicDir, 'roadrunner');
-                $server->start();
-                return 0;
-            }
-
-            // Otherwise, user invoked `php kabuto serve --driver=roadrunner` directly:
-            $rrBin = DIRECTORY_SEPARATOR === '\\' ? 'rr.exe' : 'rr';
-            $localRr = $basePath . DIRECTORY_SEPARATOR . $rrBin;
-
-            $hasRr = is_file($localRr) || is_file($basePath . '/vendor/bin/' . $rrBin);
-            if (!$hasRr) {
-                // Check in system PATH
-                @exec(DIRECTORY_SEPARATOR === '\\' ? 'where rr 2>NUL' : 'which rr 2>/dev/null', $whereOut, $whereCode);
-                $hasRr = ($whereCode === 0 && !empty($whereOut));
-            }
-
-            $configFile = $basePath . DIRECTORY_SEPARATOR . '.rr.yaml';
-
-            if ($hasRr) {
-                $this->info('Starting RoadRunner server using .rr.yaml...');
-                $executable = is_file($localRr) ? $localRr : 'rr';
-                $cmd = sprintf('%s serve -c %s', escapeshellarg($executable), escapeshellarg($configFile));
-                passthru($cmd, $exitCode);
-                return $exitCode;
-            }
-
-            $this->line();
-            $this->line("\033[1;36m  _  __     _           _        \033[0m");
-            $this->line("\033[1;36m | |/ /    | |         | |       \033[0m");
-            $this->line("\033[1;36m | ' / __ _| |__  _   _| |_ ___  \033[0m");
-            $this->line("\033[1;36m |  < / _` | '_ \\| | | | __/ _ \\ \033[0m");
-            $this->line("\033[1;36m | . \\ (_| | |_) | |_| | || (_) |\033[0m");
-            $this->line("\033[1;36m |_|\\_\\__,_|_.__/ \\__,_|\\__\\___/ \033[0m");
-            $this->line();
-            $this->line("  \033[1;32m⚡ Kabuto RoadRunner Runtime Ready\033[0m");
-            $this->line("  ─────────────────────────────────────────────────────────────");
-            $this->line("  Configuration file: \033[1m.rr.yaml\033[0m");
-            $this->line();
-            $this->line("  To launch RoadRunner, install the 'rr' binary:");
-            $this->line("    \033[1m• Linux/macOS/WSL:\033[0m curl -sL https://raw.githubusercontent.com/roadrunner-server/roadrunner/master/download-latest.sh | bash");
-            $this->line("    \033[1m• Windows (winget):\033[0m winget install Spiral.RoadRunner");
-            $this->line("    \033[1m• GitHub release:\033[0m   https://github.com/roadrunner-server/roadrunner/releases");
-            $this->line();
-            $this->line("  Then run:");
-            $this->line("    \033[1m./rr serve\033[0m");
-            $this->line("  ─────────────────────────────────────────────────────────────");
-            $this->line();
             return 0;
         }
 

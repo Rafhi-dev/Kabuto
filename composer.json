@@ -12,8 +12,7 @@
     },
     "suggest": {
         "revolt/event-loop": "Enables the high-performance fiber-based Revolt event-loop runtime on Windows and Linux.",
-        "ext-openswoole": "Enables the ultra-high-performance C++ coroutine HTTP runtime on Linux/Docker (pecl install openswoole).",
-        "spiral/roadrunner-http": "Enables official RoadRunner worker integration (or use Kabuto built-in zero-dependency RoadRunner driver)."
+        "ext-openswoole": "Enables the ultra-high-performance C++ coroutine HTTP runtime on Linux/Docker (pecl install openswoole)."
     },
     "autoload": {
         "psr-4": {

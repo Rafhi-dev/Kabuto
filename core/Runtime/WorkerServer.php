@@ -11,7 +11,6 @@ use Kabuto\Http\Response;
 use Kabuto\Runtime\Drivers\NativeDriver;
 use Kabuto\Runtime\Drivers\OpenSwooleDriver;
 use Kabuto\Runtime\Drivers\RevoltDriver;
-use Kabuto\Runtime\Drivers\RoadRunnerDriver;
 use Kabuto\Runtime\Drivers\RuntimeDriverInterface;
 use RuntimeException;
 use Throwable;
@@ -126,10 +125,6 @@ final class WorkerServer
     public static function resolveDriver(string $driver = 'auto'): RuntimeDriverInterface
     {
         $d = strtolower(trim($driver));
-
-        if ($d === 'roadrunner') {
-            return new RoadRunnerDriver();
-        }
 
         if ($d === 'openswoole') {
             if (!OpenSwooleDriver::isSupported()) {
@@ -315,12 +310,6 @@ final class WorkerServer
      */
     public function start(?Closure $onStart = null): void
     {
-        if ($this->driverInstance instanceof RoadRunnerDriver) {
-            $this->running = true;
-            $this->driverInstance->loop(null, $this);
-            return;
-        }
-
         if ($this->driverInstance instanceof OpenSwooleDriver) {
             $this->running = true;
             $this->driverInstance->startServer($this, $onStart);
