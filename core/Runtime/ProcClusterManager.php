@@ -11,6 +11,7 @@ final class ProcClusterManager
 {
     private bool $running = false;
     private int $roundRobinIndex = 0;
+    private int $lastMonitorTime = 0;
 
     /**
      * @var array<int, array{
@@ -165,7 +166,7 @@ final class ProcClusterManager
             }
 
             $except = null;
-            $changed = @stream_select($read, $write, $except, 0, 50000);
+            $changed = @stream_select($read, $write, $except, 0, 10000);
 
             if ($changed === false) {
                 continue;
@@ -274,6 +275,12 @@ final class ProcClusterManager
      */
     private function monitorWorkers(): void
     {
+        $now = time();
+        if ($now === $this->lastMonitorTime) {
+            return;
+        }
+        $this->lastMonitorTime = $now;
+
         foreach ($this->workers as $index => $info) {
             if (!is_resource($info['process'])) {
                 $this->spawnWorker($index, $info['port']);
