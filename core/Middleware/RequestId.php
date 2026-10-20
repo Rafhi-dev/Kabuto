@@ -14,7 +14,7 @@ final class RequestId
         $incoming = trim((string) $request->header('x-request-id', ''));
         $id = preg_match('/^[A-Za-z0-9._-]{1,128}$/', $incoming) === 1
             ? $incoming
-            : 'req_' . bin2hex(random_bytes(16));
+            : Request::generateId();
 
         $request->set('request_id', $id);
         $response = $next($request, $response);

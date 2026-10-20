@@ -19,6 +19,8 @@ final class NativeDriver implements RuntimeDriverInterface
     /** @var array<int,array{peer:string,time:int}> */
     private array $meta = [];
 
+    private int $lastCleanTime = 0;
+
     public function loop($serverSocket, WorkerServer $server): void
     {
         $this->running = true;
@@ -49,6 +51,13 @@ final class NativeDriver implements RuntimeDriverInterface
             if (in_array($serverSocket, $read, true)) {
                 while (($client = @stream_socket_accept($serverSocket, 0, $peerName)) !== false) {
                     stream_set_blocking($client, false);
+
+                    if (function_exists('socket_import_stream')) {
+                        $sock = @socket_import_stream($client);
+                        if ($sock !== false) {
+                            @socket_set_option($sock, SOL_TCP, TCP_NODELAY, 1);
+                        }
+                    }
 
                     if (count($this->connections) >= 1000) {
                         $this->cleanIdleConnections(1);
@@ -85,7 +94,7 @@ final class NativeDriver implements RuntimeDriverInterface
                     $rawRequest = substr($this->buffers[$id], 0, $reqLength);
                     $this->buffers[$id] = substr($this->buffers[$id], $reqLength);
 
-                    $keepAlive = !preg_match('/connection:\s*close/i', $rawRequest);
+                    $keepAlive = stripos($rawRequest, 'connection: close') === false;
                     $response = $server->handleRawRequest($rawRequest, $this->meta[$id]['peer'] ?? '');
                     $wire = $server->formatHttpResponse($response, $keepAlive);
 
@@ -114,11 +123,11 @@ final class NativeDriver implements RuntimeDriverInterface
                 }
             }
 
-            if ($server->getRequestCount() > 0 && ($server->getRequestCount() % 100) === 0) {
-                gc_collect_cycles();
+            $now = time();
+            if ($now - $this->lastCleanTime >= 5) {
+                $this->cleanIdleConnections(5);
+                $this->lastCleanTime = $now;
             }
-
-            $this->cleanIdleConnections(5);
         }
 
         $this->closeAll();

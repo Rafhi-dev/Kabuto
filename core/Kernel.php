@@ -70,7 +70,7 @@ final class Kernel
             $incoming = trim((string) $request->header('x-request-id', ''));
             $requestId = preg_match('/^[A-Za-z0-9._-]{1,128}$/', $incoming) === 1
                 ? $incoming
-                : 'req_' . bin2hex(random_bytes(16));
+                : Request::generateId();
             $request->set('request_id', $requestId);
             try {
                 [$route, $params, $pathMatched] = $this->router->resolve($request->method(), $request->path());

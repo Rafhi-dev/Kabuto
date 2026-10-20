@@ -25,6 +25,10 @@ final class Pipeline
         Response $response,
         ?Container $container = null,
     ): Response {
+        if ($middleware === []) {
+            return self::normalize($handler($request, $response), $response);
+        }
+
         $next = function (Request $request, Response $response) use ($handler): Response {
             return self::normalize($handler($request, $response), $response);
         };

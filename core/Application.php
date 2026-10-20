@@ -87,6 +87,8 @@ final class Application
     /** @var list<class-string<\Kabuto\Exceptions\ExceptionFilter>|class-string<\Kabuto\Exceptions\ContextualExceptionFilter>> */
     private array $exceptionFilters = [];
 
+    private ?Kernel $kernel = null;
+
     public function __construct(
         ?Router $router = null,
         ?Container $container = null,
@@ -734,6 +736,7 @@ final class Application
     public function use(callable|string ...$middleware): self
     {
         array_push($this->middleware, ...$middleware);
+        $this->kernel = null;
         return $this;
     }
 
@@ -797,6 +800,7 @@ final class Application
     public function onError(callable $handler): self
     {
         $this->errorHandler = $handler;
+        $this->kernel = null;
         return $this;
     }
 
@@ -811,17 +815,23 @@ final class Application
             }
             $this->exceptionFilters[] = $filter;
         }
+        $this->kernel = null;
         return $this;
     }
 
     public function handle(Request $request): Response
     {
-        $kernel = new Kernel($this->router, $this->container, $this->middleware);
-        if ($this->errorHandler !== null) {
-            $kernel->onError($this->errorHandler);
+        if ($this->kernel === null) {
+            $this->kernel = new Kernel($this->router, $this->container, $this->middleware);
+            if ($this->errorHandler !== null) {
+                $this->kernel->onError($this->errorHandler);
+            }
+            if ($this->exceptionFilters !== []) {
+                $this->kernel->useGlobalFilters(...$this->exceptionFilters);
+            }
         }
-        if ($this->exceptionFilters !== []) $kernel->useGlobalFilters(...$this->exceptionFilters);
-        return $kernel->handle($request);
+
+        return $this->kernel->handle($request);
     }
 
     public function listen(): void

@@ -45,6 +45,14 @@ final class RevoltDriver implements RuntimeDriverInterface
         $acceptWatcher = EventLoop::onReadable($serverSocket, function (string $wId, $serverSocket) use ($server): void {
             while (($client = @stream_socket_accept($serverSocket, 0, $peerName)) !== false) {
                 stream_set_blocking($client, false);
+
+                if (function_exists('socket_import_stream')) {
+                    $sock = @socket_import_stream($client);
+                    if ($sock !== false) {
+                        @socket_set_option($sock, SOL_TCP, TCP_NODELAY, 1);
+                    }
+                }
+
                 $id = (int) $client;
                 $this->connections[$id] = $client;
                 $this->buffers[$id] = '';
@@ -70,7 +78,7 @@ final class RevoltDriver implements RuntimeDriverInterface
                         $rawRequest = substr($this->buffers[$id], 0, $reqLength);
                         $this->buffers[$id] = substr($this->buffers[$id], $reqLength);
 
-                        $keepAlive = !preg_match('/connection:\s*close/i', $rawRequest);
+                        $keepAlive = stripos($rawRequest, 'connection: close') === false;
 
                         // Execute each request inside a Fiber for cooperative multitasking
                         $fiber = new Fiber(function () use ($server, $rawRequest, $client, $id, $keepAlive): void {

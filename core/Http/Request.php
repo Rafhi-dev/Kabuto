@@ -15,6 +15,21 @@ final class Request
     /** @var array<string,mixed> */
     private array $attributes = [];
 
+    private static int $idSequence = 0;
+    private static ?string $workerPrefix = null;
+
+    /**
+     * Generate an ultra-fast non-blocking unique request ID.
+     */
+    public static function generateId(): string
+    {
+        if (self::$workerPrefix === null) {
+            self::$workerPrefix = 'req_' . dechex(getmypid() & 0xFFFF) . '_';
+        }
+
+        return self::$workerPrefix . dechex((int) hrtime(true)) . '_' . dechex(++self::$idSequence);
+    }
+
     /**
      * @param array<string,mixed>  $query
      * @param array<string,mixed>  $body
@@ -74,26 +89,77 @@ final class Request
      */
     public static function fromRaw(string $rawBuffer, array $serverExtra = []): self
     {
-        $parts = explode("\r\n\r\n", $rawBuffer, 2);
-        if (count($parts) < 2) {
-            $parts = explode("\n\n", $rawBuffer, 2);
+        $delimiterPos = strpos($rawBuffer, "\r\n\r\n");
+        $delimiterLen = 4;
+        if ($delimiterPos === false) {
+            $delimiterPos = strpos($rawBuffer, "\n\n");
+            $delimiterLen = 2;
         }
 
-        $headerSection = $parts[0] ?? '';
-        $rawBody = $parts[1] ?? '';
+        if ($delimiterPos !== false) {
+            $headerSection = substr($rawBuffer, 0, $delimiterPos);
+            $rawBody = substr($rawBuffer, $delimiterPos + $delimiterLen);
+        } else {
+            $headerSection = $rawBuffer;
+            $rawBody = '';
+        }
 
-        $lines = preg_split('/\r\n|\r|\n/', $headerSection) ?: [];
-        $requestLine = array_shift($lines) ?? 'GET / HTTP/1.1';
-        $reqTokens = preg_split('/\s+/', trim($requestLine), 3) ?: [];
+        $firstLineEnd = strpos($headerSection, "\r\n");
+        $lineEndLen = 2;
+        if ($firstLineEnd === false) {
+            $firstLineEnd = strpos($headerSection, "\n");
+            $lineEndLen = 1;
+        }
 
-        $method = strtoupper($reqTokens[0] ?? 'GET');
-        $uri = $reqTokens[1] ?? '/';
+        if ($firstLineEnd !== false) {
+            $requestLine = substr($headerSection, 0, $firstLineEnd);
+            $restHeaders = substr($headerSection, $firstLineEnd + $lineEndLen);
+        } else {
+            $requestLine = $headerSection;
+            $restHeaders = '';
+        }
 
-        $path = parse_url($uri, PHP_URL_PATH) ?: '/';
-        $queryString = parse_url($uri, PHP_URL_QUERY);
-        $query = [];
-        if ($queryString !== null && $queryString !== '') {
-            parse_str($queryString, $query);
+        $requestLine = trim($requestLine);
+        $sp1 = strpos($requestLine, ' ');
+        if ($sp1 !== false) {
+            $method = strtoupper(substr($requestLine, 0, $sp1));
+            $sp2 = strpos($requestLine, ' ', $sp1 + 1);
+            if ($sp2 !== false) {
+                $uri = substr($requestLine, $sp1 + 1, $sp2 - $sp1 - 1);
+                $protocol = trim(substr($requestLine, $sp2 + 1));
+            } else {
+                $uri = trim(substr($requestLine, $sp1 + 1));
+                $protocol = 'HTTP/1.1';
+            }
+        } else {
+            $method = 'GET';
+            $uri = '/';
+            $protocol = 'HTTP/1.1';
+        }
+
+        if (str_starts_with($uri, 'http://') || str_starts_with($uri, 'https://')) {
+            $path = parse_url($uri, PHP_URL_PATH) ?: '/';
+            $queryString = parse_url($uri, PHP_URL_QUERY);
+            $query = [];
+            if ($queryString !== null && $queryString !== '') {
+                parse_str($queryString, $query);
+            }
+        } else {
+            $qPos = strpos($uri, '?');
+            if ($qPos === false) {
+                $path = $uri !== '' ? $uri : '/';
+                $query = [];
+            } else {
+                $path = substr($uri, 0, $qPos);
+                if ($path === '') {
+                    $path = '/';
+                }
+                $queryString = substr($uri, $qPos + 1);
+                $query = [];
+                if ($queryString !== '') {
+                    parse_str($queryString, $query);
+                }
+            }
         }
 
         $headers = [];
@@ -101,26 +167,36 @@ final class Request
         $server = $serverExtra;
         $server['REQUEST_METHOD'] = $method;
         $server['REQUEST_URI'] = $uri;
-        $server['SERVER_PROTOCOL'] = $reqTokens[2] ?? 'HTTP/1.1';
+        $server['SERVER_PROTOCOL'] = $protocol !== '' ? $protocol : 'HTTP/1.1';
 
-        foreach ($lines as $line) {
-            $line = trim($line);
-            if ($line === '' || !str_contains($line, ':')) {
-                continue;
-            }
-            [$headerKey, $headerVal] = explode(':', $line, 2);
-            $keyLower = strtolower(trim($headerKey));
-            $valTrimmed = trim($headerVal);
-            $headers[$keyLower] = $valTrimmed;
+        if ($restHeaders !== '') {
+            $lines = explode("\n", $restHeaders);
+            foreach ($lines as $line) {
+                $line = rtrim($line, "\r");
+                if ($line === '') {
+                    continue;
+                }
+                $colonPos = strpos($line, ':');
+                if ($colonPos === false) {
+                    continue;
+                }
 
-            $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $keyLower));
-            $server[$serverKey] = $valTrimmed;
+                $keyLower = strtolower(rtrim(substr($line, 0, $colonPos)));
+                $valTrimmed = ltrim(substr($line, $colonPos + 1));
+                $headers[$keyLower] = $valTrimmed;
 
-            if ($keyLower === 'cookie') {
-                foreach (explode(';', $valTrimmed) as $cookiePair) {
-                    if (str_contains($cookiePair, '=')) {
-                        [$cName, $cVal] = explode('=', trim($cookiePair), 2);
-                        $cookies[trim($cName)] = urldecode(trim($cVal));
+                $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $keyLower));
+                $server[$serverKey] = $valTrimmed;
+
+                if ($keyLower === 'cookie') {
+                    $cookiePairs = explode(';', $valTrimmed);
+                    foreach ($cookiePairs as $cookiePair) {
+                        $eqPos = strpos($cookiePair, '=');
+                        if ($eqPos !== false) {
+                            $cName = trim(substr($cookiePair, 0, $eqPos));
+                            $cVal = trim(substr($cookiePair, $eqPos + 1));
+                            $cookies[$cName] = urldecode($cVal);
+                        }
                     }
                 }
             }
@@ -135,7 +211,7 @@ final class Request
 
         $body = [];
         $contentType = $headers['content-type'] ?? '';
-        if (str_contains($contentType, 'application/x-www-form-urlencoded')) {
+        if ($rawBody !== '' && str_contains($contentType, 'application/x-www-form-urlencoded')) {
             parse_str($rawBody, $body);
         }
 

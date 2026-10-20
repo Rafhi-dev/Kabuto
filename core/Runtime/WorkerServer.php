@@ -39,6 +39,43 @@ final class WorkerServer
     private const MAX_HEADER_BYTES = 64 * 1024;
     private const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
+    private static int $lastDateSecond = 0;
+    private static string $cachedDateHeader = '';
+
+    /** @var array<int,string> */
+    private static array $statusLines = [
+        200 => "HTTP/1.1 200 OK\r\n",
+        201 => "HTTP/1.1 201 Created\r\n",
+        204 => "HTTP/1.1 204 No Content\r\n",
+        301 => "HTTP/1.1 301 Moved Permanently\r\n",
+        302 => "HTTP/1.1 302 Found\r\n",
+        304 => "HTTP/1.1 304 Not Modified\r\n",
+        400 => "HTTP/1.1 400 Bad Request\r\n",
+        401 => "HTTP/1.1 401 Unauthorized\r\n",
+        403 => "HTTP/1.1 403 Forbidden\r\n",
+        404 => "HTTP/1.1 404 Not Found\r\n",
+        405 => "HTTP/1.1 405 Method Not Allowed\r\n",
+        422 => "HTTP/1.1 422 Unprocessable Entity\r\n",
+        429 => "HTTP/1.1 429 Too Many Requests\r\n",
+        500 => "HTTP/1.1 500 Internal Server Error\r\n",
+        502 => "HTTP/1.1 502 Bad Gateway\r\n",
+        503 => "HTTP/1.1 503 Service Unavailable\r\n",
+    ];
+
+    /**
+     * Get a cached HTTP Date header value updated once per second.
+     */
+    public static function getHttpDate(): string
+    {
+        $now = time();
+        if ($now !== self::$lastDateSecond) {
+            self::$lastDateSecond = $now;
+            self::$cachedDateHeader = gmdate('D, d M Y H:i:s', $now) . ' GMT';
+        }
+
+        return self::$cachedDateHeader;
+    }
+
     /** @var array<string,string> */
     private static array $mimeTypes = [
         'html'  => 'text/html; charset=utf-8',
@@ -255,7 +292,9 @@ final class WorkerServer
         $context = stream_context_create([
             'socket' => [
                 'so_reuseport' => 1,
-                'backlog' => 1024,
+                'so_reuseaddr' => 1,
+                'backlog' => 4096,
+                'tcp_nodelay' => true,
             ],
         ]);
 
@@ -428,8 +467,14 @@ final class WorkerServer
         $headerSection = substr($buffer, 0, $delimiterPos);
 
         $bodyLength = 0;
-        if (preg_match('/content-length:\s*(\d+)/i', $headerSection, $match)) {
-            $bodyLength = (int) $match[1];
+        $clPos = stripos($headerSection, 'content-length:');
+        if ($clPos !== false) {
+            $numStart = $clPos + 15;
+            $len = strlen($headerSection);
+            while ($numStart < $len && ($headerSection[$numStart] === ' ' || $headerSection[$numStart] === "\t")) {
+                $numStart++;
+            }
+            $bodyLength = (int) substr($headerSection, $numStart, 16);
         }
 
         if (strlen($headerSection) > self::MAX_HEADER_BYTES || $bodyLength > self::MAX_BODY_BYTES) {
@@ -453,12 +498,12 @@ final class WorkerServer
     public function formatHttpResponse(Response $response, bool $keepAlive = true): string
     {
         $status = $response->getStatus();
-        $reason = self::getReasonPhrase($status);
+        $output = self::$statusLines[$status] ?? sprintf("HTTP/1.1 %d %s\r\n", $status, self::getReasonPhrase($status));
         $headers = $response->headers();
         $body = $response->getBody();
 
         if (!isset($headers['Date'])) {
-            $headers['Date'] = gmdate('D, d M Y H:i:s') . ' GMT';
+            $headers['Date'] = self::getHttpDate();
         }
 
         if (!isset($headers['Server'])) {
@@ -471,39 +516,34 @@ final class WorkerServer
             $headers['Content-Length'] = (string) strlen($body);
         }
 
-        $cookies = $response->getCookies();
-        $cookieHeaders = [];
-        foreach ($cookies as $c) {
-            $str = $c['name'] . '=' . rawurlencode($c['value']);
-            if (!empty($c['expires'])) {
-                $str .= '; Expires=' . gmdate('D, d M Y H:i:s T', $c['expires']);
-            }
-            if (!empty($c['path'])) {
-                $str .= '; Path=' . $c['path'];
-            }
-            if (!empty($c['domain'])) {
-                $str .= '; Domain=' . $c['domain'];
-            }
-            if (!empty($c['secure'])) {
-                $str .= '; Secure';
-            }
-            if (!empty($c['httponly'])) {
-                $str .= '; HttpOnly';
-            }
-            if (!empty($c['samesite'])) {
-                $str .= '; SameSite=' . $c['samesite'];
-            }
-            $cookieHeaders[] = 'Set-Cookie: ' . $str;
-        }
-
-        $output = sprintf("HTTP/1.1 %d %s\r\n", $status, $reason);
-
         foreach ($headers as $k => $v) {
-            $output .= sprintf("%s: %s\r\n", $k, $v);
+            $output .= $k . ': ' . $v . "\r\n";
         }
 
-        foreach ($cookieHeaders as $ch) {
-            $output .= $ch . "\r\n";
+        $cookies = $response->getCookies();
+        if ($cookies !== []) {
+            foreach ($cookies as $c) {
+                $str = $c['name'] . '=' . rawurlencode($c['value']);
+                if (!empty($c['expires'])) {
+                    $str .= '; Expires=' . gmdate('D, d M Y H:i:s T', $c['expires']);
+                }
+                if (!empty($c['path'])) {
+                    $str .= '; Path=' . $c['path'];
+                }
+                if (!empty($c['domain'])) {
+                    $str .= '; Domain=' . $c['domain'];
+                }
+                if (!empty($c['secure'])) {
+                    $str .= '; Secure';
+                }
+                if (!empty($c['httponly'])) {
+                    $str .= '; HttpOnly';
+                }
+                if (!empty($c['samesite'])) {
+                    $str .= '; SameSite=' . $c['samesite'];
+                }
+                $output .= 'Set-Cookie: ' . $str . "\r\n";
+            }
         }
 
         $output .= "\r\n";
