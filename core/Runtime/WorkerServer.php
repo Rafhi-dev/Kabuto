@@ -9,6 +9,7 @@ use Kabuto\Application;
 use Kabuto\Http\Request;
 use Kabuto\Http\Response;
 use Kabuto\Runtime\Drivers\NativeDriver;
+use Kabuto\Runtime\Drivers\OpenSwooleDriver;
 use Kabuto\Runtime\Drivers\RevoltDriver;
 use Kabuto\Runtime\Drivers\RuntimeDriverInterface;
 use RuntimeException;
@@ -124,6 +125,16 @@ final class WorkerServer
     public static function resolveDriver(string $driver = 'auto'): RuntimeDriverInterface
     {
         $d = strtolower(trim($driver));
+
+        if ($d === 'openswoole') {
+            if (!OpenSwooleDriver::isSupported()) {
+                throw new RuntimeException(
+                    'The OpenSwoole runtime driver requires the "openswoole" PHP extension. ' .
+                    'Install it via PECL: pecl install openswoole'
+                );
+            }
+            return new OpenSwooleDriver();
+        }
 
         if ($d === 'revolt') {
             if (!RevoltDriver::isSupported()) {
@@ -282,6 +293,16 @@ final class WorkerServer
         return $this->driverInstance->name();
     }
 
+    public function getApp(): Application
+    {
+        return $this->app;
+    }
+
+    public function getPublicDir(): string
+    {
+        return $this->publicDir;
+    }
+
     /**
      * Start the worker server.
      *
@@ -289,6 +310,12 @@ final class WorkerServer
      */
     public function start(?Closure $onStart = null): void
     {
+        if ($this->driverInstance instanceof OpenSwooleDriver) {
+            $this->running = true;
+            $this->driverInstance->startServer($this, $onStart);
+            return;
+        }
+
         $context = stream_context_create([
             'socket' => [
                 'so_reuseport' => 1,
@@ -520,30 +547,8 @@ final class WorkerServer
             $output .= $k . ': ' . $v . "\r\n";
         }
 
-        $cookies = $response->getCookies();
-        if ($cookies !== []) {
-            foreach ($cookies as $c) {
-                $str = $c['name'] . '=' . rawurlencode($c['value']);
-                if (!empty($c['expires'])) {
-                    $str .= '; Expires=' . gmdate('D, d M Y H:i:s T', $c['expires']);
-                }
-                if (!empty($c['path'])) {
-                    $str .= '; Path=' . $c['path'];
-                }
-                if (!empty($c['domain'])) {
-                    $str .= '; Domain=' . $c['domain'];
-                }
-                if (!empty($c['secure'])) {
-                    $str .= '; Secure';
-                }
-                if (!empty($c['httponly'])) {
-                    $str .= '; HttpOnly';
-                }
-                if (!empty($c['samesite'])) {
-                    $str .= '; SameSite=' . $c['samesite'];
-                }
-                $output .= 'Set-Cookie: ' . $str . "\r\n";
-            }
+        foreach ($response->cookieHeaders() as $ch) {
+            $output .= 'Set-Cookie: ' . $ch . "\r\n";
         }
 
         $output .= "\r\n";

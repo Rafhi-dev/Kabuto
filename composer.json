@@ -11,7 +11,8 @@
         "revolt/event-loop": "^1.0"
     },
     "suggest": {
-        "revolt/event-loop": "Enables the high-performance fiber-based Revolt event-loop runtime on Windows and Linux."
+        "revolt/event-loop": "Enables the high-performance fiber-based Revolt event-loop runtime on Windows and Linux.",
+        "ext-openswoole": "Enables the ultra-high-performance C++ coroutine HTTP runtime on Linux/Docker (pecl install openswoole)."
     },
     "autoload": {
         "psr-4": {

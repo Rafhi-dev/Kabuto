@@ -15,6 +15,7 @@ use Kabuto\Runtime\WorkerServer;
  *   php kabuto serve --workers=auto
  *   php kabuto serve --workers=auto*2
  *   php kabuto serve --workers=4 --driver=revolt
+ *   php kabuto serve --workers=4 --driver=openswoole
  *   php kabuto serve --workers=4 --max-requests=100000
  *   php kabuto serve --port=8080 --host=0.0.0.0
  *   php kabuto serve --traditional
