@@ -118,7 +118,7 @@ final class ServeCommand extends Command
             $this->line("  Configuration file: \033[1m.rr.yaml\033[0m");
             $this->line();
             $this->line("  To launch RoadRunner, install the 'rr' binary:");
-            $this->line("    \033[1m• Linux/macOS/WSL:\033[0m curl -s https://get.roadrunner.dev | sh");
+            $this->line("    \033[1m• Linux/macOS/WSL:\033[0m curl -sL https://raw.githubusercontent.com/roadrunner-server/roadrunner/master/download-latest.sh | bash");
             $this->line("    \033[1m• Windows (winget):\033[0m winget install Spiral.RoadRunner");
             $this->line("    \033[1m• GitHub release:\033[0m   https://github.com/roadrunner-server/roadrunner/releases");
             $this->line();
